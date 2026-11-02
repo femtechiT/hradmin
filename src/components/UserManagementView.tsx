@@ -6,6 +6,8 @@ import {
   updateUser,
   deleteUser,
   toggleUserStatus,
+  softDeleteUser,
+  restoreUser,
   User,
   CreateUserRequest,
   UpdateUserRequest
@@ -14,7 +16,7 @@ import { getAllRoles } from '../services/roleManagementService';
 import { getAllBranches } from '../services/branchManagementService';
 import {
   User as UserIcon, Plus, Edit3, Trash2, X, Check, AlertCircle,
-  Mail, Shield, Building, Search, Eye, EyeOff
+  Mail, Shield, Building, Search, Eye, EyeOff, UserX, RotateCcw
 } from 'lucide-react';
 import { Pagination } from './Pagination';
 import { Avatar } from './Avatar';
@@ -36,6 +38,10 @@ const UserManagementView = () => {
   const [searchQuery, setSearchQuery] = useState('');
   const searchTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
+  // Status filter — '' is the default view (everyone except soft-deleted);
+  // 'deleted' is the one tab that can ever surface a soft-deleted account.
+  const [statusFilter, setStatusFilter] = useState('');
+
   // Form modals
   const [showCreateForm, setShowCreateForm] = useState(false);
   const [showEditForm, setShowEditForm] = useState(false);
@@ -54,11 +60,11 @@ const UserManagementView = () => {
   const [roles, setRoles] = useState<any[]>([]);
   const [branches, setBranches] = useState<any[]>([]);
 
-  const loadUsers = useCallback(async (page: number, search?: string) => {
+  const loadUsers = useCallback(async (page: number, search?: string, status?: string) => {
     try {
       setLoading(true);
       setError(null);
-      const usersResponse = await getAllUsers(page, itemsPerPage, search);
+      const usersResponse = await getAllUsers(page, itemsPerPage, search, status);
       if (usersResponse.success) {
         setUsers(usersResponse.users || []);
         setTotalUsers(usersResponse.total || 0);
@@ -90,9 +96,9 @@ const UserManagementView = () => {
   }, [roles.length, branches.length]);
 
   useEffect(() => {
-    loadUsers(currentPage, searchQuery);
+    loadUsers(currentPage, searchQuery, statusFilter);
     loadDropdowns();
-  }, [currentPage, loadUsers, loadDropdowns]);
+  }, [currentPage, statusFilter, loadUsers, loadDropdowns]);
 
   useEffect(() => {
     setCurrentPage(1);
@@ -103,8 +109,13 @@ const UserManagementView = () => {
     if (searchTimeoutRef.current) clearTimeout(searchTimeoutRef.current);
     searchTimeoutRef.current = setTimeout(() => {
       setCurrentPage(1);
-      loadUsers(1, value);
+      loadUsers(1, value, statusFilter);
     }, 400);
+  };
+
+  const handleStatusFilterChange = (status: string) => {
+    setStatusFilter(status);
+    setCurrentPage(1);
   };
 
   const resetForm = () => {
@@ -127,7 +138,7 @@ const UserManagementView = () => {
         setTimeout(() => setSuccessMessage(null), 3000);
         setShowCreateForm(false);
         resetForm();
-        loadUsers(currentPage, searchQuery);
+        loadUsers(currentPage, searchQuery, statusFilter);
       } else {
         setError(response.message || 'Failed to create user');
       }
@@ -148,7 +159,7 @@ const UserManagementView = () => {
         setShowEditForm(false);
         setEditingUser(null);
         resetForm();
-        loadUsers(currentPage, searchQuery);
+        loadUsers(currentPage, searchQuery, statusFilter);
       } else {
         setError(response.message || 'Failed to update user');
       }
@@ -164,7 +175,7 @@ const UserManagementView = () => {
         if (response.success) {
           setSuccessMessage('User deleted successfully');
           setTimeout(() => setSuccessMessage(null), 3000);
-          loadUsers(currentPage, searchQuery);
+          loadUsers(currentPage, searchQuery, statusFilter);
         } else {
           setError(response.message || 'Failed to delete user');
         }
@@ -180,7 +191,7 @@ const UserManagementView = () => {
       if (response.success) {
         setSuccessMessage('User activated successfully');
         setTimeout(() => setSuccessMessage(null), 3000);
-        loadUsers(currentPage, searchQuery);
+        loadUsers(currentPage, searchQuery, statusFilter);
       } else {
         setError(response.message || 'Failed to activate user');
       }
@@ -196,13 +207,48 @@ const UserManagementView = () => {
         if (response.success) {
           setSuccessMessage('User deactivated successfully');
           setTimeout(() => setSuccessMessage(null), 3000);
-          loadUsers(currentPage, searchQuery);
+          loadUsers(currentPage, searchQuery, statusFilter);
         } else {
           setError(response.message || 'Failed to deactivate user');
         }
       } catch (err: any) {
         setError(err.message || 'An error occurred while deactivating user');
       }
+    }
+  };
+
+  // Distinct from handleDeleteUser (which only deactivates) — this hides the
+  // user+staff record everywhere except the Deleted filter and frees their
+  // email for reuse.
+  const handlePermanentDeleteUser = async (id: number) => {
+    if (window.confirm('Permanently delete this user? They will disappear everywhere except this screen\'s Deleted filter, and their email becomes available for a new account. This can be undone with Restore.')) {
+      try {
+        const response = await softDeleteUser(id);
+        if (response.success) {
+          setSuccessMessage('User deleted successfully');
+          setTimeout(() => setSuccessMessage(null), 3000);
+          loadUsers(currentPage, searchQuery, statusFilter);
+        } else {
+          setError(response.message || 'Failed to delete user');
+        }
+      } catch (err: any) {
+        setError(err.message || 'An error occurred while deleting user');
+      }
+    }
+  };
+
+  const handleRestoreUser = async (id: number) => {
+    try {
+      const response = await restoreUser(id);
+      if (response.success) {
+        setSuccessMessage('User restored successfully');
+        setTimeout(() => setSuccessMessage(null), 3000);
+        loadUsers(currentPage, searchQuery, statusFilter);
+      } else {
+        setError(response.message || 'Failed to restore user');
+      }
+    } catch (err: any) {
+      setError(err.message || 'An error occurred while restoring user');
     }
   };
 
@@ -378,7 +424,7 @@ const UserManagementView = () => {
         </div>
       </div>
 
-      {/* Action Bar with Search */}
+      {/* Action Bar with Search + Status Filter */}
       <div className="card" style={{ padding: '0.875rem 1rem', display: 'flex', alignItems: 'center', gap: '0.6rem', flexWrap: 'wrap' }}>
         <div style={{ position: 'relative', flex: '1 1 230px', minWidth: '200px' }}>
           <Search size={13} color={T.textMuted} style={{ position: 'absolute', left: '0.7rem', top: '50%', transform: 'translateY(-50%)', pointerEvents: 'none' }} />
@@ -389,6 +435,32 @@ const UserManagementView = () => {
             onChange={e => handleSearchChange(e.target.value)}
             style={{ width: '100%', boxSizing: 'border-box', padding: '0.575rem 0.875rem 0.575rem 2.1rem', border: `1.5px solid ${T.border}`, borderRadius: '8px', fontSize: '0.875rem', color: T.text, background: T.surface, outline: 'none', fontFamily: 'inherit' }}
           />
+        </div>
+        <div style={{ display: 'flex', gap: '0.35rem' }}>
+          {[
+            { value: '', label: 'All' },
+            { value: 'active', label: 'Active' },
+            { value: 'inactive', label: 'Inactive' },
+            { value: 'terminated', label: 'Terminated' },
+            { value: 'deleted', label: 'Deleted' },
+          ].map(opt => (
+            <button
+              key={opt.value}
+              onClick={() => handleStatusFilterChange(opt.value)}
+              style={{
+                padding: '0.4rem 0.75rem',
+                borderRadius: '7px',
+                fontSize: '0.78rem',
+                fontWeight: 600,
+                cursor: 'pointer',
+                border: `1px solid ${statusFilter === opt.value ? T.primary : T.border}`,
+                background: statusFilter === opt.value ? T.primaryPale : T.surface,
+                color: statusFilter === opt.value ? T.primary : T.textSub,
+              }}
+            >
+              {opt.label}
+            </button>
+          ))}
         </div>
         <button className="btn btn-primary" onClick={() => { resetForm(); setShowCreateForm(true); }} style={{ marginLeft: 'auto' }}>
           <Plus className="w-4 h-4" />
@@ -449,29 +521,46 @@ const UserManagementView = () => {
                       {branches.find(b => b.id === user.branchId)?.name || <span style={{ color: T.textMuted }}>N/A</span>}
                     </td>
                     <td style={{ padding: '0.85rem 1rem', borderBottom: `1px solid ${T.border}` }}>
-                      <StatusBadge label={user.isActive ? 'Active' : 'Inactive'} tone={user.isActive ? 'success' : 'warning'} />
+                      {user.isDeleted ? (
+                        <StatusBadge label="Deleted" tone="neutral" />
+                      ) : (
+                        <StatusBadge label={user.isActive ? 'Active' : (user.status === 'terminated' ? 'Terminated' : 'Inactive')} tone={user.isActive ? 'success' : 'warning'} />
+                      )}
                     </td>
                     <td style={{ padding: '0.85rem 1rem', borderBottom: `1px solid ${T.border}`, textAlign: 'right' }}>
                       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'flex-end', gap: '0.4rem' }}>
-                        {user.isActive ? (
-                          <button onClick={() => handleDeactivateUser(user.id)} title="Deactivate"
-                            style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', width: '1.9rem', height: '1.9rem', border: `1px solid ${T.warningBorder}`, borderRadius: '7px', background: T.warningPale, color: T.warning, cursor: 'pointer' }}>
-                            <X size={13} />
+                        {user.isDeleted ? (
+                          <button onClick={() => handleRestoreUser(user.id)} title="Restore"
+                            style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', width: '1.9rem', height: '1.9rem', border: `1px solid ${T.successBorder}`, borderRadius: '7px', background: T.successPale, color: T.success, cursor: 'pointer' }}>
+                            <RotateCcw size={13} />
                           </button>
                         ) : (
-                          <button onClick={() => handleActivateUser(user.id)} title="Activate"
-                            style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', width: '1.9rem', height: '1.9rem', border: `1px solid ${T.successBorder}`, borderRadius: '7px', background: T.successPale, color: T.success, cursor: 'pointer' }}>
-                            <Check size={13} />
-                          </button>
+                          <>
+                            {user.isActive ? (
+                              <button onClick={() => handleDeactivateUser(user.id)} title="Deactivate"
+                                style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', width: '1.9rem', height: '1.9rem', border: `1px solid ${T.warningBorder}`, borderRadius: '7px', background: T.warningPale, color: T.warning, cursor: 'pointer' }}>
+                                <X size={13} />
+                              </button>
+                            ) : (
+                              <button onClick={() => handleActivateUser(user.id)} title="Activate"
+                                style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', width: '1.9rem', height: '1.9rem', border: `1px solid ${T.successBorder}`, borderRadius: '7px', background: T.successPale, color: T.success, cursor: 'pointer' }}>
+                                <Check size={13} />
+                              </button>
+                            )}
+                            <button onClick={() => startEditing(user)} title="Edit"
+                              style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', width: '1.9rem', height: '1.9rem', border: `1px solid ${T.border}`, borderRadius: '7px', background: T.surface, color: T.textSub, cursor: 'pointer' }}>
+                              <Edit3 size={13} />
+                            </button>
+                            <button onClick={() => handleDeleteUser(user.id)} title="Deactivate (legacy Delete action)"
+                              style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', width: '1.9rem', height: '1.9rem', border: `1px solid ${T.dangerBorder}`, borderRadius: '7px', background: T.dangerPale, color: T.danger, cursor: 'pointer' }}>
+                              <Trash2 size={13} />
+                            </button>
+                            <button onClick={() => handlePermanentDeleteUser(user.id)} title="Permanently Delete"
+                              style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', width: '1.9rem', height: '1.9rem', border: `1px solid ${T.dangerBorder}`, borderRadius: '7px', background: T.danger, color: '#fff', cursor: 'pointer' }}>
+                              <UserX size={13} />
+                            </button>
+                          </>
                         )}
-                        <button onClick={() => startEditing(user)} title="Edit"
-                          style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', width: '1.9rem', height: '1.9rem', border: `1px solid ${T.border}`, borderRadius: '7px', background: T.surface, color: T.textSub, cursor: 'pointer' }}>
-                          <Edit3 size={13} />
-                        </button>
-                        <button onClick={() => handleDeleteUser(user.id)} title="Delete"
-                          style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', width: '1.9rem', height: '1.9rem', border: `1px solid ${T.dangerBorder}`, borderRadius: '7px', background: T.dangerPale, color: T.danger, cursor: 'pointer' }}>
-                          <Trash2 size={13} />
-                        </button>
                       </div>
                     </td>
                   </tr>

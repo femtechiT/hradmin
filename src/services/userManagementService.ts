@@ -11,6 +11,8 @@ export interface User {
   branchId: number;
   departmentId: number;
   isActive: boolean;
+  status: string;
+  isDeleted: boolean;
   createdAt: string;
   updatedAt: string;
 }
@@ -92,7 +94,9 @@ export const updateUserRole = async (userId: number, roleId: number): Promise<{ 
 
 // Get all users
 // GET {{baseUrl}}/users
-export const getAllUsers = async (page?: number, limit?: number, search?: string): Promise<{ success: boolean; users?: User[]; total?: number; page?: number; limit?: number; totalPages?: number; message?: string }> => {
+// `status` accepts 'active' | 'inactive' | 'terminated' | 'deleted', or
+// omit it for the default view (everyone except soft-deleted accounts).
+export const getAllUsers = async (page?: number, limit?: number, search?: string, status?: string): Promise<{ success: boolean; users?: User[]; total?: number; page?: number; limit?: number; totalPages?: number; message?: string }> => {
   try {
     const token = localStorage.getItem('authToken');
     if (!token) {
@@ -107,6 +111,7 @@ export const getAllUsers = async (page?: number, limit?: number, search?: string
     if (page !== undefined) params.append('page', page.toString());
     if (limit !== undefined) params.append('limit', limit.toString());
     if (search !== undefined && search.trim()) params.append('search', search.trim());
+    if (status !== undefined && status.trim()) params.append('status', status.trim());
 
     const queryString = params.toString();
     const url = `${API_ENDPOINT}/users${queryString ? '?' + queryString : ''}`;
@@ -168,6 +173,8 @@ export const getAllUsers = async (page?: number, limit?: number, search?: string
         branchId: u.branch_id || u.branchId || 0,
         departmentId: u.department_id || u.departmentId || 0,
         isActive: u.status === 'active',
+        status: u.status || '',
+        isDeleted: !!u.deleted_at,
         createdAt: u.created_at || u.createdAt || '',
         updatedAt: u.updated_at || u.updatedAt || ''
       };
@@ -434,6 +441,82 @@ export const deleteUser = async (userId: number): Promise<{ success: boolean; me
     return {
       success: false,
       message: error.response?.data?.message || error.message || 'Failed to delete user',
+    };
+  }
+};
+
+// Permanently (soft-)delete a user — distinct from deleteUser() above, which
+// only deactivates. Hides the user+staff record everywhere except the
+// Deleted filter here, and frees their email for reuse by a new hire.
+// PATCH {{baseUrl}}/users/:id/delete
+export const softDeleteUser = async (userId: number): Promise<{ success: boolean; message?: string }> => {
+  try {
+    const token = localStorage.getItem('authToken');
+    if (!token) {
+      return {
+        success: false,
+        message: 'Authentication token not found. Please log in again.'
+      };
+    }
+
+    const response = await axios.patch(`${API_ENDPOINT}/users/${userId}/delete`, null, {
+      headers: {
+        'Authorization': `Bearer ${token}`,
+      },
+    });
+
+    return {
+      success: true,
+      message: response.data?.message || 'User deleted successfully',
+    };
+  } catch (error: any) {
+    console.error('Error soft-deleting user:', error);
+    if (error.response?.status === 401 || error.response?.status === 403) {
+      return {
+        success: false,
+        message: 'Access denied. Please check your permissions or log in again.'
+      };
+    }
+    return {
+      success: false,
+      message: error.response?.data?.message || error.message || 'Failed to delete user',
+    };
+  }
+};
+
+// Undo softDeleteUser.
+// PATCH {{baseUrl}}/users/:id/restore
+export const restoreUser = async (userId: number): Promise<{ success: boolean; message?: string }> => {
+  try {
+    const token = localStorage.getItem('authToken');
+    if (!token) {
+      return {
+        success: false,
+        message: 'Authentication token not found. Please log in again.'
+      };
+    }
+
+    const response = await axios.patch(`${API_ENDPOINT}/users/${userId}/restore`, null, {
+      headers: {
+        'Authorization': `Bearer ${token}`,
+      },
+    });
+
+    return {
+      success: true,
+      message: response.data?.message || 'User restored successfully',
+    };
+  } catch (error: any) {
+    console.error('Error restoring user:', error);
+    if (error.response?.status === 401 || error.response?.status === 403) {
+      return {
+        success: false,
+        message: 'Access denied. Please check your permissions or log in again.'
+      };
+    }
+    return {
+      success: false,
+      message: error.response?.data?.message || error.message || 'Failed to restore user',
     };
   }
 };
